@@ -26,21 +26,33 @@ interface iFetchResponse {
 
 export class AnimePahe {
 	constructor(
-		private readonly streamUrl: string
+		private readonly streamUrl: string,
+		private readonly userAgent: string
 	) { }
+
+	private static Headers(streamUrl: string | false, userAgent: string) {
+		return {
+			'accept': 'application/json, text/javascript, */*; q=0.01',
+			'cookie': 'cf_clearance=Origin;',
+			'referer': streamUrl ? `https://animepahe.ru/anime/${ streamUrl }` : 'https://animepahe.ru',
+			'user-agent': userAgent,
+		}
+	}
+
+	private async Series() {
+		const res = /<h1><span>(?<title>[^<]+)<\/span>/.exec(await fetch(`https://animepahe.ru/anime/${this.streamUrl}`, {
+			headers: AnimePahe.Headers(this.streamUrl, this.userAgent)
+		}).then(async (res) => await res.text())) as RegExpExecArray
+		return (res.groups as Record<string, string>)['title']
+	}
 
 	private async Extract(page: string | false) {
 		return await fetch(`https://animepahe.ru/api?m=release&id=${this.streamUrl}&sort=episode_asc&page=${page ? page : 1}`, {
-			headers: {
-				'accept': 'application/json, text/javascript, */*; q=0.01',
-				'cookie': 'cf_clearance=Origin;',
-				'referer': `https://animepahe.ru/anime/${this.streamUrl}`,
-				'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
-			}
+			headers: AnimePahe.Headers(this.streamUrl, this.userAgent)
 		}).then((res) => res.json<iFetchResponse>());
 	}
 
-	private async Kwix (pahe: string) {
+	private async Kwix(pahe: string) {
 		const res = /href="(?<kwik>https:\/\/kwik.cx\/[^"]+)"/.exec(
 			await fetch(pahe).then(async (res) => await res.text())
 		) as RegExpExecArray
@@ -48,13 +60,18 @@ export class AnimePahe {
 	}
 
 	public async Episodes(page: string | false) {
-		const { data, total } = await this.Extract(page)
+		const [title, { data, total }] = await Promise.all([
+			this.Series(),
+			this.Extract(page)
+		])
 
 		const response: {
+			title: string,
 			total: number,
 			next: boolean,
 			episodes: Array<Record<string, string | number>>
 		} = {
+			title: title,
 			total: total,
 			next: false,
 			episodes: []
@@ -64,8 +81,8 @@ export class AnimePahe {
 			response.next = true
 		}
 
-		for (const { episode, session } of data) {
-			response.episodes.push({ episode: episode, session: session })
+		for (const { episode, session, snapshot } of data) {
+			response.episodes.push({ episode: String(episode).padStart(2, '0'), session, snapshot })
 		}
 
 		return response
@@ -73,12 +90,7 @@ export class AnimePahe {
 
 	public async Links(session: string) {
 		return await fetch(`https://animepahe.ru/play/${this.streamUrl}/${session}`, {
-			headers: {
-				'accept': 'application/json, text/javascript, */*; q=0.01',
-				'cookie': 'cf_clearance=Origin;',
-				'referer': `https://animepahe.ru/anime/${this.streamUrl}`,
-				'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
-			}
+			headers: AnimePahe.Headers(this.streamUrl, this.userAgent)
 		}).then(async (res) => {
 			const raw = await res.text()
 			const data: { link: string, name: string }[] = []
@@ -107,5 +119,14 @@ export class AnimePahe {
 			}
 			return data
 		});
+	}
+
+	public static async search(query: string, userAgent: string) {
+		const res = await fetch(`https://animepahe.ru/api?m=search&q=${ query }`, {
+			headers: AnimePahe.Headers(false, userAgent)
+		}).then(async (data) => {
+			return await data.json<object>()
+		})
+		return res
 	}
 }
