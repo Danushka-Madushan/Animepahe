@@ -2,7 +2,7 @@
     <div class="flex justify-center mt-6 gap-2">
         <div class="join justify-center w-full">
             <input v-model="query" class="input input-bordered font-medium join-item text-center w-full max-w-sm"
-                placeholder="Anime" />
+                placeholder="Anime Name" />
             <button @click="RequestSearchData(query)" class="btn join-item">SEARCH</button>
         </div>
     </div>
