@@ -11,7 +11,7 @@ export default defineNuxtConfig({
 	runtimeConfig: {
 		public: {
 			DEV: false,
-			API: 'https://anime.disnakamadushan66.workers.dev/',
+			API: 'https://anime.apex-cloud.workers.dev/',
 		}
 	},
 	image: {
