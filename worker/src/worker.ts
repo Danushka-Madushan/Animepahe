@@ -28,9 +28,9 @@ export default {
 				page: 'PAGE NO (Required with series method',
 				ep: 'EPIsode ID',
 				example: {
-					"SEARCH-ANIME": 'https://anime.disnakamadushan66.workers.dev/?method=search&query=Words',
-					"FETCH-EPISODE-OF-A-SERIES": "https://anime.disnakamadushan66.workers.dev/?method=series&session=5fe211d4-3cef-c32a-ab31-ec777f07fc5f&page=1",
-					"REQUEST-LINKS-OF-A-EPISODE": "https://anime.disnakamadushan66.workers.dev/?method=episode&session=5fe211d4-3cef-c32a-ab31-ec777f07fc5f&ep=52f935732970bc1e1482d7e726b34fba1ffdbe040a55f9c9c03cfa0a20dff6ea"
+					"SEARCH-ANIME": 'https://anime.apex-cloud.workers.dev/?method=search&query=Words',
+					"FETCH-EPISODE-OF-A-SERIES": "https://anime.apex-cloud.workers.dev/?method=series&session=5fe211d4-3cef-c32a-ab31-ec777f07fc5f&page=1",
+					"REQUEST-LINKS-OF-A-EPISODE": "https://anime.apex-cloud.workers.dev/?method=episode&session=5fe211d4-3cef-c32a-ab31-ec777f07fc5f&ep=52f935732970bc1e1482d7e726b34fba1ffdbe040a55f9c9c03cfa0a20dff6ea"
 				}
 			}, 'application/json')
 		}
