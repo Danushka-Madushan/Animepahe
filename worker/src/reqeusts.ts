@@ -63,7 +63,7 @@ export class AnimePahe {
 	}
 
 	private async Kwix(pahe: string) {
-		const res = /(?<kwik>https?:\/\/kwik.cx\/f\/.[^"]+)/.exec(
+		const res = /(?<kwik>https?:\/\/kwik.[a-z]+\/f\/.[^"]+)/.exec(
 			await fetch(pahe).then(async (res) => await res.text())
 		) as RegExpExecArray
 		return (res.groups as Record<string, string>)['kwik']
