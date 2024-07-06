@@ -79,15 +79,19 @@ export class AnimePahe {
 			title: string,
 			total: number,
 			next: boolean,
+			page: number,
+			total_pages: number,
 			episodes: Array<Record<string, string | number>>
 		} = {
 			title: title,
 			total: total,
+			page: parseInt(page || "1"),
+			total_pages: Math.ceil(total / 30),
 			next: false,
 			episodes: []
 		}
 
-		if (total > 30 && data.length > (total - 30)) {
+		if (total > 30 && (total - (30 * parseInt(page || "1")) > 0)) {
 			response.next = true
 		}
 
