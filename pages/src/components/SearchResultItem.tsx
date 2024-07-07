@@ -48,12 +48,12 @@ const SearchResultItem = ({
 
   return (
     <Card isPressable disableRipple onPress={() => {
-      /* clear previously selected serieses */
+      /* clear previously selected serieses 
       const keys = Object.keys(fetched_eps);
       if (keys.length === 1 && keys[0] !== session) {
         keys.forEach(key => delete fetched_eps[key]);
       }
-      /* fetch episodes */
+      */
       FetchEpisodes(1)
       }} className="m-4 w-72 cursor-pointer hover:border-primary border-1">
       <CardHeader className="pb-0 pt-2 px-4 flex-col text-left items-start h-32 overflow-hidden">
