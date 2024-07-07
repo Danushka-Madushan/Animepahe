@@ -46,4 +46,11 @@ declare module 'fetch/requests' {
             "url": string
         }
     }
+
+    interface FetchedEpisodes {
+        [key: string]: {
+            total_page: number,
+            [key: number]: EpisodeResult['episodes']
+        }
+    }
 }
