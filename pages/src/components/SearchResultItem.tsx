@@ -2,8 +2,7 @@ import { Card, CardHeader, CardBody, Image, Divider, Chip, Spinner } from '@next
 import { Prox } from '../utils/ImgProxy'
 import useAxios from '../hooks/useAxios'
 import { ANIME } from '../config/config'
-import { EpisodeResult } from 'fetch/requests'
-import { Dispatch, SetStateAction } from 'react'
+import { EpisodeResult, FetchedEpisodes } from 'fetch/requests'
 
 interface SearchResultItemProps {
   title: string,
@@ -14,34 +13,49 @@ interface SearchResultItemProps {
   year: number,
   session: string,
   score: number | null,
-  setEpisodes: Dispatch<SetStateAction<EpisodeResult['episodes']>>
-  setBreadcrumbs: (title: string) => void,
-  setSelectedSeriesID: Dispatch<SetStateAction<string>>,
-  setPagination: Dispatch<SetStateAction<number>>,
+  fetched_eps: FetchedEpisodes,
+  onSeriesUpdate: (
+    episodes: EpisodeResult['episodes'],
+    breadcrumbs: string,
+    session: string,
+    pagination: number
+  ) => void
 }
 
 const SearchResultItem = ({ 
-  session, title, episodes, poster, status, type, year, score,
-  setBreadcrumbs, setEpisodes, setSelectedSeriesID, setPagination
+  session, title, episodes, poster, status, type, year, score, fetched_eps, onSeriesUpdate
 }: SearchResultItemProps) => {
   const { isLoading, request } = useAxios()
 
   const FetchEpisodes = async (page: number) => {
-    const response = await request<EpisodeResult>({
-      server: ANIME,
-      endpoint: `/?method=series&session=${session}&page=${page}`,
-      method: 'GET'
-    })
-    if (response) {
-      setPagination(response.total_pages)
-      setBreadcrumbs(title)
-      setEpisodes(response.episodes)
-      setSelectedSeriesID(session)
+    if (fetched_eps[session] === undefined) {
+      const response = await request<EpisodeResult>({
+        server: ANIME,
+        endpoint: `/?method=series&session=${session}&page=${page}`,
+        method: 'GET'
+      })
+      if (response) {
+        onSeriesUpdate(response.episodes, title, session, response.total_pages)
+        fetched_eps[session] = {
+          total_page: response.total_pages,
+          [page] : response.episodes
+        }
+      }
+      return
     }
+    onSeriesUpdate(fetched_eps[session][page], title, session, fetched_eps[session]['total_page'])
   }
 
   return (
-    <Card isPressable disableRipple onPress={() => FetchEpisodes(1)} className="m-4 w-72 cursor-pointer hover:border-primary border-1">
+    <Card isPressable disableRipple onPress={() => {
+      /* clear previously selected serieses */
+      const keys = Object.keys(fetched_eps);
+      if (keys.length === 1 && keys[0] !== session) {
+        keys.forEach(key => delete fetched_eps[key]);
+      }
+      /* fetch episodes */
+      FetchEpisodes(1)
+      }} className="m-4 w-72 cursor-pointer hover:border-primary border-1">
       <CardHeader className="pb-0 pt-2 px-4 flex-col text-left items-start h-32 overflow-hidden">
         <div className='flex flex-col gap-y-2 my-2'>
           <span className="text-default-500">{episodes} Episodes</span>
