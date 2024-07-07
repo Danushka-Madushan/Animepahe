@@ -1,11 +1,13 @@
 import { useState } from 'react'
-import { EpisodeResult, SearchItem } from 'fetch/requests'
+import { EpisodeResult, FetchedEpisodes, SearchItem } from 'fetch/requests'
 import { BreadcrumbItem, Breadcrumbs, Pagination, Spinner } from '@nextui-org/react'
 import SearchBar from './components/SearchBar'
 import SearchResultItem from './components/SearchResultItem'
 import Episode from './components/Episode'
 import useAxios from './hooks/useAxios'
 import { ANIME } from './config/config'
+
+const fetched_eps: FetchedEpisodes = {}
 
 const App = () => {
   const [SearchResult, setSearchResult] = useState<SearchItem[]>([])
@@ -23,15 +25,32 @@ const App = () => {
 
   const { isLoading, request } = useAxios()
 
+  const onSeriesUpdate = (
+    episodes: EpisodeResult['episodes'],
+    breadcrumbs: string,
+    session: string,
+    pagination: number
+  ) => {
+    setEpisodes(episodes)
+    setBreadcrumbs(breadcrumbs)
+    setSelectedSeriesID(session)
+    setPagination(pagination)
+  }
+
   const onPaginationChange = async (page: number) => {
-    const response = await request<EpisodeResult>({
-      server: ANIME,
-      endpoint: `/?method=series&session=${SelectedSeriesID}&page=${page}`,
-      method: 'GET'
-    })
-    if (response) {
-      setEpisodes(response.episodes)
+    if (fetched_eps[SelectedSeriesID][page] === undefined) {
+      const response = await request<EpisodeResult>({
+        server: ANIME,
+        endpoint: `/?method=series&session=${SelectedSeriesID}&page=${page}`,
+        method: 'GET'
+      })
+      if (response) {
+        setEpisodes(response.episodes)
+        fetched_eps[SelectedSeriesID] = { ...fetched_eps[SelectedSeriesID], [page]: response.episodes }
+      }
+      return;
     }
+    setEpisodes(fetched_eps[SelectedSeriesID][page])
   }
 
   return (
@@ -58,10 +77,8 @@ const App = () => {
                   year={year}
                   score={score}
                   session={session}
-                  setEpisodes={setEpisodes}
-                  setSelectedSeriesID={setSelectedSeriesID}
-                  setBreadcrumbs={setBreadcrumbs}
-                  setPagination={setPagination}
+                  onSeriesUpdate={onSeriesUpdate}
+                  fetched_eps={fetched_eps}
                 />
               })
             }
