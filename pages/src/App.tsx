@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { EpisodeResult, FetchedEpisodes, SearchItem } from 'fetch/requests'
+import { EpisodeResult, FetchedEpisodes, FetchedEpisodesDlinks, SearchItem } from 'fetch/requests'
 import { BreadcrumbItem, Breadcrumbs, Pagination, Spinner } from '@nextui-org/react'
 import SearchBar from './components/SearchBar'
 import SearchResultItem from './components/SearchResultItem'
@@ -8,6 +8,7 @@ import useAxios from './hooks/useAxios'
 import { ANIME } from './config/config'
 
 const fetched_eps: FetchedEpisodes = {}
+const fetched_eps_dlinks: FetchedEpisodesDlinks = {}
 
 const App = () => {
   const [SearchResult, setSearchResult] = useState<SearchItem[]>([])
@@ -90,7 +91,8 @@ const App = () => {
             <div className='flex flex-wrap justify-center'>
               {
                 isLoading ? <div className='flex h-96 justify-center items-center'><Spinner size='lg'/></div> : Episodes.map(({ episode, session, snapshot }) => {
-                  return <Episode seriesname={SelctedAnime} key={session} series={SelectedSeriesID} episode={episode} session={session} snapshot={snapshot} />
+                  fetched_eps_dlinks[SelectedSeriesID] ??= {};
+                  return <Episode linkCache={fetched_eps_dlinks} seriesname={SelctedAnime} key={session} series={SelectedSeriesID} episode={episode} session={session} snapshot={snapshot} />
                 })
               }
             </div>
