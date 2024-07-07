@@ -3,28 +3,40 @@ import { Prox } from '../utils/ImgProxy';
 import useAxios from '../hooks/useAxios';
 import { ANIME } from '../config/config';
 import DownloadModel from './DownloadModel';
+import { DownloadLinks, FetchedEpisodesDlinks } from 'fetch/requests';
+import { useState } from 'react';
 
 interface EpisodeProps {
   session: string,
   episode: string,
   snapshot: string,
   series: string,
-  seriesname: string
+  seriesname: string,
+  linkCache: FetchedEpisodesDlinks
 }
 
-const Episode = ({ episode, session, snapshot, series, seriesname }: EpisodeProps) => {
-  const { isLoading, request, data } = useAxios()
+const Episode = ({ episode, session, snapshot, series, seriesname, linkCache }: EpisodeProps) => {
+  const { isLoading, request } = useAxios()
   const { isOpen, onOpen, onOpenChange } = useDisclosure()
 
+  const [dlinks, setDlinks] = useState<DownloadLinks>([])
+
   const RequestLinks = async () => {
-    const response = await request({
-      server: ANIME,
-      endpoint: `/?method=episode&session=${ series }&ep=${ session }`,
-      method: 'GET'
-    })
-    if (response) {
-      onOpen()
+    if (linkCache[series][session] === undefined) {
+      const response = await request<DownloadLinks>({
+        server: ANIME,
+        endpoint: `/?method=episode&session=${ series }&ep=${ session }`,
+        method: 'GET'
+      })
+      if (response) {
+        setDlinks(response)
+        linkCache[series] = {...linkCache[series], [session]: response}
+        onOpen()
+      }
+      return
     }
+    setDlinks(linkCache[series][session]);
+    onOpen();
   }
 
   return (
@@ -45,7 +57,7 @@ const Episode = ({ episode, session, snapshot, series, seriesname }: EpisodeProp
           { isLoading ? <Spinner color='default' size='sm'/> : 'EP ' + episode }
         </Button>
       </CardFooter>
-      <DownloadModel epName={`${seriesname} : EP ${episode}`} isOpen={isOpen} links={data as { link: string, name: string }[]} onOpenChange={onOpenChange}/>
+      <DownloadModel epName={`${seriesname} : EP ${episode}`} isOpen={isOpen} links={dlinks} onOpenChange={onOpenChange}/>
     </Card>
   );
 }
