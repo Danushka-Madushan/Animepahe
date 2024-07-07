@@ -53,4 +53,10 @@ declare module 'fetch/requests' {
             [key: number]: EpisodeResult['episodes']
         }
     }
+
+    interface FetchedEpisodesDlinks {
+        [key: string]: {
+            [key: string]: DownloadLinks
+        }
+    }
 }
