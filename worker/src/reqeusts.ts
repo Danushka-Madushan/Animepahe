@@ -50,7 +50,7 @@ export class AnimePahe {
 	}
 
 	private async Series() {
-		const res = /<h1><span>(?<title>[^<]+)<\/span>/.exec(await fetch(`https://animepahe.ru/anime/${this.streamUrl}`, {
+		const res = /<h1[^>]*><span[^>]*>(?<title>[^<]+)<\/span>/.exec(await fetch(`https://animepahe.ru/anime/${this.streamUrl}`, {
 			headers: AnimePahe.Headers(this.streamUrl, this.userAgent)
 		}).then(async (res) => await res.text())) as RegExpExecArray
 		return (res.groups as Record<string, string>)['title']
