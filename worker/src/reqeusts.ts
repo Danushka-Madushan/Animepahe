@@ -62,11 +62,83 @@ export class AnimePahe {
 		}).then((res) => res.json<iFetchResponse>());
 	}
 
+	private decoder (QM: string, Y_: number, eZ: number) {
+		const g = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+/".split("");
+		const h = g.slice(0, Y_);
+		const i = g.slice(0, eZ);
+
+		let j = QM.split("").reverse().reduce((wM, Js, Ra) => {
+			if (h.indexOf(Js) !== -1) {
+				return wM += h.indexOf(Js) * (Math.pow(Y_, Ra))
+			}
+			return 0
+		}, 0);
+
+		let k = "";
+		while (j > 0) {
+			k = i[j % eZ] + k;
+			j = (j - (j % eZ)) / eZ
+		}
+		return k || 0
+	}
+
+	private decodeContent(encString: string, num1: number, encToken: string, num2: number, num3: number, num4: number | string) {
+		num4 = "";
+		for (let i = 0, len = encString.length; i < len; i ++) {
+			let s = "";
+			while (encString[i] !== encToken[num3]) {
+				s += encString[i];
+				i ++
+			}
+			for (let j = 0; j < encToken.length; j ++) {
+				s = s.replace(new RegExp(encToken[j], "g"), j.toString());
+			}
+			num4 += String.fromCharCode(Number(this.decoder(s, num3, 10)) - num2)
+		}
+		const value = decodeURIComponent(encodeURI(num4))
+		return value;
+	}
+
+	private DecodePaheWin(kwikText: string) {
+		const bodyString = /\(("(?<encString>.+?)",(?<num1>\d+),"(?<encToken>.+?)",(?<num2>\d+),(?<num3>\d+),(?<num4>\d+).+?\))/.exec(kwikText) as RegExpExecArray
+		const Tokens = bodyString.groups as {
+			encString: string | false,
+			encToken: string | false
+			num1: string | false,
+			num2: string | false,
+			num3: string | false,
+			num4: string | false,
+		}
+		if (
+			Tokens.encString &&
+			Tokens.encToken &&
+			Tokens.num1 &&
+			Tokens.num2 &&
+			Tokens.num3 &&
+			Tokens.num4
+		) {
+			const { encString, num1, encToken, num2, num3, num4 } = Tokens
+			const decoded = this.decodeContent(encString, parseInt(num1), encToken, parseInt(num2), parseInt(num3), parseInt(num4))
+			return decoded;
+		}
+		return false;
+	}
+
 	private async Kwix(pahe: string) {
-		const res = /(?<kwik>https?:\/\/kwik.[a-z]+\/f\/.[^"]+)/.exec(
-			await fetch(pahe).then(async (res) => await res.text())
-		) as RegExpExecArray
-		return (res.groups as Record<string, string>)['kwik']
+		const response = await fetch(pahe).then(async (res) => await res.text())
+		const res = /(?<kwik>https?:\/\/kwik.[a-z]+\/f\/.[^"]+)/.exec(response) as RegExpExecArray
+		if (res) {
+			return (res.groups as Record<string, string>)['kwik']
+		}
+		const content = this.DecodePaheWin(response);
+		if (content) {
+			const res = /(?<kwik>https?:\/\/kwik\.[^/\s"]+\/[^/\s"]+\/[^"\s]*)/.exec(content) as RegExpExecArray
+			if (res) {
+				const modifiedUrl = (res.groups as Record<string, string>)['kwik'].replace("/d/", "/f/");
+				return modifiedUrl;
+			}
+		}
+		return false;
 	}
 
 	public async Episodes(page: string | false) {
@@ -111,7 +183,7 @@ export class AnimePahe {
 			let m;
 
 			const regex = /href="(?<link>https?:\/\/pahe[.]win\/[^"]+)"[^>]+>(?<name>[^<]+)/g
-			const KwixArray: Array<Promise<string>> = []
+			const KwixArray: Array<Promise<string | false>> = []
 
 			while ((m = regex.exec(raw.replace(/\n/g, '')) as RegExpExecArray) !== null) {
 				if (m.index === regex.lastIndex) {
@@ -129,9 +201,15 @@ export class AnimePahe {
 			const resolved = await Promise.all(KwixArray)
 
 			for (const item in resolved) {
-				data[item].link = resolved[item]
+				const content = resolved[item];
+				if (content) {
+					data[item].link = content;
+				} else {
+					data[item].link = "null";
+				}
 			}
-			return data
+
+			return data.filter(obj => obj.link !== "null");
 		});
 	}
 
