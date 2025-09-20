@@ -32,7 +32,7 @@ export class AnimePahe {
 
 	private static Headers(streamUrl: string | false, userAgent: string) {
 		return {
-			'authority': 'animepahe.ru',
+			'authority': 'animepahe.si',
 			'accept': 'application/json, text/javascript, */*; q=0.01',
 			'accept-language': 'en-US,en;q=0.9',
 			'cookie': '__ddg2_=;',
@@ -44,20 +44,20 @@ export class AnimePahe {
 			'sec-fetch-mode': 'cors',
 			'sec-fetch-site': 'same-origin',
 			'x-requested-with': 'XMLHttpRequest',
-			'referer': streamUrl ? `https://animepahe.ru/anime/${ streamUrl }` : 'https://animepahe.ru',
+			'referer': streamUrl ? `https://animepahe.si/anime/${ streamUrl }` : 'https://animepahe.si',
 			'user-agent': userAgent,
 		}
 	}
 
 	private async Series() {
-		const res = /<h1[^>]*><span[^>]*>(?<title>[^<]+)<\/span>/.exec(await fetch(`https://animepahe.ru/anime/${this.streamUrl}`, {
+		const res = /<h1[^>]*><span[^>]*>(?<title>[^<]+)<\/span>/.exec(await fetch(`https://animepahe.si/anime/${this.streamUrl}`, {
 			headers: AnimePahe.Headers(this.streamUrl, this.userAgent)
 		}).then(async (res) => await res.text())) as RegExpExecArray
 		return (res.groups as Record<string, string>)['title']
 	}
 
 	private async Extract(page: string | false) {
-		return await fetch(`https://animepahe.ru/api?m=release&id=${this.streamUrl}&sort=episode_asc&page=${page ? page : 1}`, {
+		return await fetch(`https://animepahe.si/api?m=release&id=${this.streamUrl}&sort=episode_asc&page=${page ? page : 1}`, {
 			headers: AnimePahe.Headers(this.streamUrl, this.userAgent)
 		}).then((res) => res.json<iFetchResponse>());
 	}
@@ -175,7 +175,7 @@ export class AnimePahe {
 	}
 
 	public async Links(session: string) {
-		return await fetch(`https://animepahe.ru/play/${this.streamUrl}/${session}`, {
+		return await fetch(`https://animepahe.si/play/${this.streamUrl}/${session}`, {
 			headers: AnimePahe.Headers(this.streamUrl, this.userAgent)
 		}).then(async (res) => {
 			const raw = await res.text()
@@ -214,7 +214,7 @@ export class AnimePahe {
 	}
 
 	public static async search(query: string, userAgent: string) {
-		const res = await fetch(`https://animepahe.ru/api?m=search&q=${ query }`, {
+		const res = await fetch(`https://animepahe.si/api?m=search&q=${ query }`, {
 			headers: AnimePahe.Headers(false, userAgent)
 		}).then(async (data) => {
 			return await data.json<object>()
