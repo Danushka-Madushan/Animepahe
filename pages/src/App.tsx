@@ -1,16 +1,19 @@
 import { useState } from 'react'
 import { EpisodeResult, FetchedEpisodes, FetchedEpisodesDlinks, SearchItem } from 'fetch/requests'
-import { BreadcrumbItem, Breadcrumbs, Chip, Link, Pagination, Spinner } from '@nextui-org/react'
+import { BreadcrumbItem, Breadcrumbs, Button, Chip, Link, Pagination, Spinner, useDisclosure } from '@nextui-org/react'
 import SearchBar from './components/SearchBar'
 import SearchResultItem from './components/SearchResultItem'
 import Episode from './components/Episode'
 import useAxios from './hooks/useAxios'
 import { ANIME } from './config/config'
+import BulkDownloadModel from './components/BulkDownloadModel'
 
 const fetched_eps: FetchedEpisodes = {}
 const fetched_eps_dlinks: FetchedEpisodesDlinks = {}
 
 const App = () => {
+  const supportsSeasonZip = typeof window !== 'undefined' && typeof (window as any).showSaveFilePicker === 'function'
+
   const [SearchResult, setSearchResult] = useState<SearchItem[]>([])
   const [Episodes, setEpisodes] = useState<EpisodeResult['episodes']>([])
   const [SelectedSeriesID, setSelectedSeriesID] = useState<string>('')
@@ -18,6 +21,8 @@ const App = () => {
 
   const [curPagination, setPagination] = useState(0)
   const [SelctedAnime, setSelectedAnime] = useState('')
+
+  const { isOpen: isBulkOpen, onOpen: onBulkOpen, onOpenChange: onBulkOpenChange } = useDisclosure()
 
   const setBreadcrumbs = (title: string) => {
     setSelectedAnime(title);
@@ -94,7 +99,21 @@ const App = () => {
           </div> :
           <div>
             <div className='flex justify-center mt-4'>
-              <Pagination showControls onChange={onPaginationChange} total={curPagination} initialPage={1} />
+              <div className='flex gap-x-3 items-center'>
+                <Pagination showControls onChange={onPaginationChange} total={curPagination} initialPage={1} />
+                {
+                  supportsSeasonZip && (
+                    <Button
+                      color="secondary"
+                      variant="flat"
+                      onPress={onBulkOpen}
+                      isDisabled={!SelectedSeriesID || Episodes.length === 0}
+                    >
+                      Download Season
+                    </Button>
+                  )
+                }
+              </div>
             </div>
             <div className='flex flex-wrap justify-center'>
               {
@@ -104,6 +123,19 @@ const App = () => {
                 })
               }
             </div>
+            {
+              supportsSeasonZip && (
+                <BulkDownloadModel
+                  isOpen={isBulkOpen}
+                  onOpenChange={onBulkOpenChange}
+                  animeServer={ANIME}
+                  seriesId={SelectedSeriesID}
+                  seriesName={SelctedAnime}
+                  totalPages={curPagination}
+                  currentEpisodes={Episodes}
+                />
+              )
+            }
           </div>
       }
     </div>
