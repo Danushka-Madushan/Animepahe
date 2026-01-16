@@ -12,12 +12,13 @@ import {
 } from "@nextui-org/react";
 import { Zip, ZipPassThrough } from "fflate";
 import { DownloadLinks, EpisodeResult } from "fetch/requests";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { AUTH_TOKEN, KWIK } from "../config/config";
 
 interface BulkDownloadModelProps {
   isOpen: boolean;
+  setIsPreparing: Dispatch<SetStateAction<boolean>>;
   onOpenChange: () => void;
   animeServer: string;
   seriesId: string;
@@ -75,17 +76,26 @@ const runPool = async <T, R>(
   items: readonly T[],
   concurrency: number,
   worker: (item: T, index: number) => Promise<R>
-) => {
+): Promise<R[]> => {
   const results = new Array<R>(items.length);
   let nextIndex = 0;
 
-  const runners = new Array(Math.min(concurrency, items.length)).fill(null).map(async () => {
-    while (true) {
-      const index = nextIndex++;
-      if (index >= items.length) return;
-      results[index] = await worker(items[index], index);
-    }
-  });
+  /* Define a single runner function */
+  const runNext = async (): Promise<void> => {
+    if (nextIndex >= items.length) return;
+
+    const index = nextIndex++;
+    results[index] = await worker(items[index], index);
+
+    /* Tail-call style recursion to pick up the next available task */
+    return runNext();
+  };
+
+  /* Launch the initial set of runners based on concurrency */
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    runNext
+  );
 
   await Promise.all(runners);
   return results;
@@ -97,21 +107,34 @@ const fetchJson = async <T,>(url: string, signal: AbortSignal): Promise<T> => {
   return (await res.json()) as T;
 };
 
-const probeUrl = async (url: string, signal: AbortSignal) => {
+const probeUrl = async (url: string, signal: AbortSignal): Promise<void> => {
   const res = await fetch(url, {
     method: "GET",
     headers: { Range: "bytes=0-0" },
     signal,
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  /* Early return if no body (e.g., 204 No Content) */
   if (!res.body) return;
-  const reader = res.body.getReader();
+
+  /**
+   * We use the built-in cancel() method on the stream directly.
+   * This signals the browser to close the connection immediately 
+   * after the first chunk is received, preventing unnecessary data transfer.
+   */
   try {
+    const reader = res.body.getReader();
     await reader.read();
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {}
+    await reader.cancel();
+  } catch (err) {
+    /* Ignore errors during cancellation if the stream is already closed */
+    if (!(err instanceof DOMException && err.name === 'AbortError')) {
+      toast.error("Error during probe cancellation");
+    }
   }
 };
 
@@ -128,6 +151,7 @@ const BulkDownloadModel = ({
   seriesName,
   totalPages,
   currentEpisodes,
+  setIsPreparing
 }: BulkDownloadModelProps) => {
   const abortRef = useRef<AbortController | null>(null);
 
@@ -225,10 +249,11 @@ const BulkDownloadModel = ({
       const mapping: Record<string, DownloadLinks> = {};
       for (const r of results) mapping[r.session] = r.links;
       setLinksByEpisode(mapping);
-    } catch (e) {
-      if ((e as any)?.name !== "AbortError") toast.error("Failed to prepare season download");
+    } catch (err) {
+      toast.error("Failed to prepare season download");
     } finally {
       setPreparing(false);
+      setIsPreparing(false);
     }
   };
 
@@ -268,7 +293,7 @@ const BulkDownloadModel = ({
   const downloadZipZap = async () => {
     if (selectedLinks.length === 0) return;
 
-    const showSaveFilePicker = (window as any).showSaveFilePicker as undefined | ((options?: any) => Promise<any>);
+    const showSaveFilePicker = (window as { showSaveFilePicker?: unknown }).showSaveFilePicker as undefined | ((options?: object) => Promise<FileSystemFileHandle>);
     if (!showSaveFilePicker) {
       toast.error("Season ZIP requires Chrome/Edge (File System Access API)");
       return;
@@ -330,7 +355,7 @@ const BulkDownloadModel = ({
           doneReject?.(err);
           return;
         }
-        writeChain = writeChain.then(() => fileStream.write(data));
+        writeChain = writeChain.then(() => fileStream.write(data as Uint8Array<ArrayBuffer>));
         if (final) {
           writeChain = writeChain
             .then(() => fileStream.close())
@@ -356,9 +381,13 @@ const BulkDownloadModel = ({
         zip.add(entry);
 
         const reader = res.body.getReader();
-        while (true) {
+        let isReading = true;
+        while (isReading) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            isReading = false;
+            break;
+          }
           entry.push(value, false);
         }
         entry.push(new Uint8Array(0), true);
@@ -368,8 +397,10 @@ const BulkDownloadModel = ({
       zip.end();
       await done;
       toast.success("Season zip saved");
-    } catch (e) {
-      if ((e as any)?.name !== "AbortError") toast.error((e as Error)?.message ?? "Season zip failed");
+    } catch (err) {
+      if ((err instanceof DOMException && err.name === 'AbortError')) {
+        toast.error(err?.message ?? "Season zip failed");
+      }
     } finally {
       setZipping(false);
     }
@@ -438,4 +469,3 @@ const BulkDownloadModel = ({
 };
 
 export default BulkDownloadModel;
-
