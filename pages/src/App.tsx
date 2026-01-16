@@ -20,11 +20,12 @@ const App = () => {
   const [Episodes, setEpisodes] = useState<EpisodeResult['episodes']>([])
   const [SelectedSeriesID, setSelectedSeriesID] = useState<string>('')
   const [isHomeActive, setHomeActive] = useState(true)
-
+  
   const [curPagination, setPagination] = useState(0)
   const [SelctedAnime, setSelectedAnime] = useState('')
-
+  
   const { isOpen: isBulkOpen, onOpen: onBulkOpen, onOpenChange: onBulkOpenChange } = useDisclosure()
+  const [isBulkPreparing, setBulkPreparing] = useState(false)
 
   const setBreadcrumbs = (title: string) => {
     setSelectedAnime(title);
@@ -108,7 +109,11 @@ const App = () => {
                       <Button
                         color="secondary"
                         variant="flat"
-                        onPress={onBulkOpen}
+                        onPress={() => {
+                          onBulkOpen()
+                          setBulkPreparing(true)
+                        }}
+                        isLoading={isBulkPreparing}
                         isDisabled={!SelectedSeriesID || Episodes.length === 0}
                       >
                         Download Season
@@ -129,6 +134,7 @@ const App = () => {
                 supportsSeasonZip && (
                   <BulkDownloadModel
                     isOpen={isBulkOpen}
+                    setIsPreparing={setBulkPreparing}
                     onOpenChange={onBulkOpenChange}
                     animeServer={ANIME}
                     seriesId={SelectedSeriesID}
