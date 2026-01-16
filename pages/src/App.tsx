@@ -12,6 +12,8 @@ const fetched_eps: FetchedEpisodes = {}
 const fetched_eps_dlinks: FetchedEpisodesDlinks = {}
 
 const App = () => {
+  const supportsSeasonZip = typeof window !== 'undefined' && typeof (window as any).showSaveFilePicker === 'function'
+
   const [SearchResult, setSearchResult] = useState<SearchItem[]>([])
   const [Episodes, setEpisodes] = useState<EpisodeResult['episodes']>([])
   const [SelectedSeriesID, setSelectedSeriesID] = useState<string>('')
@@ -99,14 +101,18 @@ const App = () => {
             <div className='flex justify-center mt-4'>
               <div className='flex gap-x-3 items-center'>
                 <Pagination showControls onChange={onPaginationChange} total={curPagination} initialPage={1} />
-                <Button
-                  color="secondary"
-                  variant="flat"
-                  onPress={onBulkOpen}
-                  isDisabled={!SelectedSeriesID || Episodes.length === 0}
-                >
-                  Download Season
-                </Button>
+                {
+                  supportsSeasonZip && (
+                    <Button
+                      color="secondary"
+                      variant="flat"
+                      onPress={onBulkOpen}
+                      isDisabled={!SelectedSeriesID || Episodes.length === 0}
+                    >
+                      Download Season
+                    </Button>
+                  )
+                }
               </div>
             </div>
             <div className='flex flex-wrap justify-center'>
@@ -117,15 +123,19 @@ const App = () => {
                 })
               }
             </div>
-            <BulkDownloadModel
-              isOpen={isBulkOpen}
-              onOpenChange={onBulkOpenChange}
-              animeServer={ANIME}
-              seriesId={SelectedSeriesID}
-              seriesName={SelctedAnime}
-              totalPages={curPagination}
-              currentEpisodes={Episodes}
-            />
+            {
+              supportsSeasonZip && (
+                <BulkDownloadModel
+                  isOpen={isBulkOpen}
+                  onOpenChange={onBulkOpenChange}
+                  animeServer={ANIME}
+                  seriesId={SelectedSeriesID}
+                  seriesName={SelctedAnime}
+                  totalPages={curPagination}
+                  currentEpisodes={Episodes}
+                />
+              )
+            }
           </div>
       }
     </div>
