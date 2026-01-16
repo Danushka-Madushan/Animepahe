@@ -12,7 +12,9 @@ const fetched_eps: FetchedEpisodes = {}
 const fetched_eps_dlinks: FetchedEpisodesDlinks = {}
 
 const App = () => {
-  const supportsSeasonZip = typeof window !== 'undefined' && typeof (window as any).showSaveFilePicker === 'function'
+  const supportsSeasonZip =
+    typeof window !== 'undefined' &&
+    typeof (window as { showSaveFilePicker?: unknown }).showSaveFilePicker === 'function';
 
   const [SearchResult, setSearchResult] = useState<SearchItem[]>([])
   const [Episodes, setEpisodes] = useState<EpisodeResult['episodes']>([])
@@ -69,76 +71,76 @@ const App = () => {
         >Animepahe CLI Released! <Link color='secondary' underline="always" isExternal showAnchorIcon href='https://github.com/Danushka-Madushan/animepahe-cli'>latest version</Link></Chip>
       </div>
       <div className='mt-4 mb-4'>
-      <SearchBar setSearchResult={setSearchResult} setHomeActive={setHomeActive} />
-      <div className='flex justify-center mt-4'>
-        <Breadcrumbs variant='bordered'>
-          <BreadcrumbItem onPress={() => setHomeActive(true)}>Home</BreadcrumbItem>
-          {isHomeActive ? false : <BreadcrumbItem>{SelctedAnime}</BreadcrumbItem>}
-        </Breadcrumbs>
-      </div>
-      {
-        isHomeActive ?
-          <div className='flex flex-wrap justify-center'>
-            {
-              SearchResult.map(({ title, poster, episodes, status, id, type, year, score, session }) => {
-                return <SearchResultItem
-                  key={id}
-                  title={title}
-                  poster={poster}
-                  episodes={episodes}
-                  status={status}
-                  type={type}
-                  year={year}
-                  score={score}
-                  session={session}
-                  onSeriesUpdate={onSeriesUpdate}
-                  fetched_eps={fetched_eps}
-                />
-              })
-            }
-          </div> :
-          <div>
-            <div className='flex justify-center mt-4'>
-              <div className='flex gap-x-3 items-center'>
-                <Pagination showControls onChange={onPaginationChange} total={curPagination} initialPage={1} />
-                {
-                  supportsSeasonZip && (
-                    <Button
-                      color="secondary"
-                      variant="flat"
-                      onPress={onBulkOpen}
-                      isDisabled={!SelectedSeriesID || Episodes.length === 0}
-                    >
-                      Download Season
-                    </Button>
-                  )
-                }
-              </div>
-            </div>
+        <SearchBar setSearchResult={setSearchResult} setHomeActive={setHomeActive} />
+        <div className='flex justify-center mt-4'>
+          <Breadcrumbs variant='bordered'>
+            <BreadcrumbItem onPress={() => setHomeActive(true)}>Home</BreadcrumbItem>
+            {isHomeActive ? false : <BreadcrumbItem>{SelctedAnime}</BreadcrumbItem>}
+          </Breadcrumbs>
+        </div>
+        {
+          isHomeActive ?
             <div className='flex flex-wrap justify-center'>
               {
-                isLoading ? <div className='flex h-96 justify-center items-center'><Spinner size='lg'/></div> : Episodes.map(({ episode, session, snapshot }) => {
-                  fetched_eps_dlinks[SelectedSeriesID] ??= {};
-                  return <Episode linkCache={fetched_eps_dlinks} seriesname={SelctedAnime} key={session} series={SelectedSeriesID} episode={episode} session={session} snapshot={snapshot} />
+                SearchResult.map(({ title, poster, episodes, status, id, type, year, score, session }) => {
+                  return <SearchResultItem
+                    key={id}
+                    title={title}
+                    poster={poster}
+                    episodes={episodes}
+                    status={status}
+                    type={type}
+                    year={year}
+                    score={score}
+                    session={session}
+                    onSeriesUpdate={onSeriesUpdate}
+                    fetched_eps={fetched_eps}
+                  />
                 })
               }
+            </div> :
+            <div>
+              <div className='flex justify-center mt-4'>
+                <div className='flex gap-x-3 items-center'>
+                  <Pagination showControls onChange={onPaginationChange} total={curPagination} initialPage={1} />
+                  {
+                    supportsSeasonZip && (
+                      <Button
+                        color="secondary"
+                        variant="flat"
+                        onPress={onBulkOpen}
+                        isDisabled={!SelectedSeriesID || Episodes.length === 0}
+                      >
+                        Download Season
+                      </Button>
+                    )
+                  }
+                </div>
+              </div>
+              <div className='flex flex-wrap justify-center'>
+                {
+                  isLoading ? <div className='flex h-96 justify-center items-center'><Spinner size='lg' /></div> : Episodes.map(({ episode, session, snapshot }) => {
+                    fetched_eps_dlinks[SelectedSeriesID] ??= {};
+                    return <Episode linkCache={fetched_eps_dlinks} seriesname={SelctedAnime} key={session} series={SelectedSeriesID} episode={episode} session={session} snapshot={snapshot} />
+                  })
+                }
+              </div>
+              {
+                supportsSeasonZip && (
+                  <BulkDownloadModel
+                    isOpen={isBulkOpen}
+                    onOpenChange={onBulkOpenChange}
+                    animeServer={ANIME}
+                    seriesId={SelectedSeriesID}
+                    seriesName={SelctedAnime}
+                    totalPages={curPagination}
+                    currentEpisodes={Episodes}
+                  />
+                )
+              }
             </div>
-            {
-              supportsSeasonZip && (
-                <BulkDownloadModel
-                  isOpen={isBulkOpen}
-                  onOpenChange={onBulkOpenChange}
-                  animeServer={ANIME}
-                  seriesId={SelectedSeriesID}
-                  seriesName={SelctedAnime}
-                  totalPages={curPagination}
-                  currentEpisodes={Episodes}
-                />
-              )
-            }
-          </div>
-      }
-    </div>
+        }
+      </div>
     </div>
   )
 }
