@@ -15,6 +15,7 @@ import { DownloadLinks, EpisodeResult } from "fetch/requests";
 import { Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { AUTH_TOKEN, KWIK } from "../config/config";
+import { toBase64Url } from '../utils/b64';
 
 interface BulkDownloadModelProps {
   isOpen: boolean;
@@ -319,16 +320,25 @@ const BulkDownloadModel = ({
         }
         resolvedCount += 1;
         setProgress({ label: "Resolving direct links (Zap)...", value: resolvedCount, max: selectedLinks.length });
-        return { episode: item.episode, directUrl: direct.content.url };
+        return { episode: item.episode, directUrl: direct.content.url, kwik: item.kwikUrl };
       });
 
-      const directMap: Record<string, string> = {};
-      for (const r of resolved) directMap[r.episode] = r.directUrl;
+      const directMap: Record<string, { link: string; kwik: string }> = {};
+      for (const r of resolved) {
+        directMap[r.episode] = {
+          link: r.directUrl,
+          kwik: r.kwik,
+        }
+      }
 
       setProgress({ label: "Checking availability...", value: 0, max: selectedLinks.length });
       let probedCount = 0;
       await runPool(resolved, 3, async (item) => {
-        const proxied = `${animeServer}/proxy?modify&proxyUrl=${encodeURIComponent(item.directUrl)}`;
+        const streamData = {
+          "directUrl": item.directUrl,
+          "referer": item.kwik
+        }
+        const proxied = "https://dl.gst-hunter.workers.dev/stream/" + toBase64Url(JSON.stringify(streamData));
         await probeUrl(proxied, controller.signal);
         probedCount += 1;
         setProgress({ label: "Checking availability...", value: probedCount, max: selectedLinks.length });
@@ -372,7 +382,11 @@ const BulkDownloadModel = ({
         const directUrl = directMap[episode];
         if (!directUrl) throw new Error(`Missing resolved URL (EP ${episode})`);
 
-        const proxied = `${animeServer}/proxy?modify&proxyUrl=${encodeURIComponent(directUrl)}`;
+        const streamData = {
+          "directUrl": directUrl.link,
+          "referer": directUrl.kwik
+        }
+        const proxied = "https://dl.gst-hunter.workers.dev/stream/" + toBase64Url(JSON.stringify(streamData));
         const res = await fetch(proxied, { signal: controller.signal });
         if (!res.ok || !res.body) throw new Error(`Download failed (EP ${episode})`);
 
