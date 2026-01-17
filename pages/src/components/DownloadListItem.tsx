@@ -3,6 +3,7 @@ import { Download, Zap } from 'lucide-react';
 import useAxios from '../hooks/useAxios';
 import { KWIK } from '../config/config';
 import { DirectLink } from 'fetch/requests';
+import { toBase64Url } from '../utils/b64';
 
 interface DownloadListItemProps {
   name: string,
@@ -24,7 +25,12 @@ const DownloadListItem = ({ name, link }: DownloadListItemProps) => {
       }
     })
     if (response) {
-      window.open(response.content.url, '_blank', 'noopener,noreferrer');
+      /* create-stream-url */
+      const streamData = {
+        "directUrl": response.content.url,
+        "referer": kwik
+      }
+      window.open("https://dl.gst-hunter.workers.dev/stream/" + toBase64Url(JSON.stringify(streamData)), '_blank', 'noopener,noreferrer');
     }
   }
 
