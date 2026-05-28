@@ -1,0 +1,21 @@
+{
+  "name": "anime-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for anime downloads",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node -r dotenv/config dist/index.js",
+    "dev": "ts-node -r dotenv/config src/index.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^17.4.2",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}

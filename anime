@@ -1,0 +1,1078 @@
+import { Env, WorkerResponse } from './config';
+import * as cheerio from 'cheerio';
+
+// --- Interfaces ---
+
+interface AiringResponse {
+    total: number;
+    per_page: number;
+    current_page: number;
+    last_page: number;
+    data: Array<{
+        id: number;
+        title: string;
+        slug: string;
+        poster: string;
+        episode_count: number;
+        status: string;
+        season: string;
+        year: number;
+    }>;
+}
+
+interface SearchResponse {
+    total: number;
+    data: Array<{
+        id: number;
+        title: string;
+        slug: string;
+        poster: string;
+        type: string;
+        episodes: number;
+        status: string;
+    }>;
+}
+
+interface EpisodeData {
+    id: number;
+    episode: number;
+    episode2: number;
+    title: string;
+    session: string;
+    snapshot: string;
+    audio: string;
+    duration: string;
+    filler: number;
+}
+
+interface LinkQuality {
+    quality: string;
+    size: string;
+    link: string;
+    kwik_url: string;
+    embed: string;
+    mp4_url?: string | null; // Extracted direct link if possible
+    fansub?: string | null;
+    resolution?: string | null;
+    filesize?: string | null;
+    isDub?: boolean;
+    isBD?: boolean;
+}
+
+interface EpisodeLinks {
+    episode: number;
+    title: string;
+    embed?: string | null;
+    embed_mp4?: string | null;
+    links: LinkQuality[];
+}
+
+interface AnimeInfo {
+    title: string;
+    alternative_titles: string[];
+    english_title?: string;
+    japanese_title?: string;
+    synopsis: string;
+    genre: string[];
+    premiered: string;
+    status: string;
+    type: string;
+    episodes: number | null;
+    episode_duration?: string;
+    poster: string;
+    cover: string;
+    score: number | null;
+    aired: string;
+    producers: string[];
+    studios: string[];
+    source?: string;
+    rating?: string;
+    season?: string;
+    year?: number;
+    themes?: {
+        opening?: string[];
+        ending?: string[];
+    };
+    ids?: {
+        animepahe_id: string | null;
+        anidb: string | null;
+        anilist: string | null;
+        animePlanet: string | null;
+        ann: string | null;
+        kitsu: string | null;
+        mal: string | null;
+    };
+    relations?: any;
+    recommendations?: any[];
+    watching?: number;
+    completed?: number;
+    plan_to_watch?: number;
+}
+
+interface IndexResponse {
+    total: number;
+    current_page: number;
+    last_page: number;
+    data: Array<{
+        id: number;
+        title: string;
+        slug: string;
+        poster: string;
+        type: string;
+    }>;
+}
+
+// --- Decoder Logic (Pure JS - No VM) ---
+
+class KwikDecoder {
+    /**
+     * Decodes the base62-like string used in Kwik/pahe.win obfuscation
+     */
+    private static baseDecode(str: string, radix: number): number {
+        const chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+/";
+        let result = 0;
+        const len = str.length;
+        
+        for (let i = 0; i < len; i++) {
+            const char = str[len - 1 - i]; // Reverse
+            const val = chars.indexOf(char);
+            if (val === -1) continue;
+            result += val * Math.pow(radix, i);
+        }
+        return result;
+    }
+
+    /**
+     * Main decoding function matching the obfuscated logic
+     */
+    static decodeContent(encString: string, num1: number, encToken: string, num2: number, num3: number): string {
+        let result = "";
+        let i = 0;
+        const len = encString.length;
+
+        while (i < len) {
+            let s = "";
+            // Accumulate characters until we hit the delimiter (encToken[num3])
+            while (i < len && encString[i] !== encToken[num3]) {
+                s += encString[i];
+                i++;
+            }
+            i++; // Skip delimiter
+
+            // Map token chars to indices
+            for (let j = 0; j < encToken.length; j++) {
+                // Global replace of token char with its index
+                s = s.split(encToken[j]).join(j.toString());
+            }
+
+            // Convert from custom base to decimal, subtract offset, get char
+            const decimalVal = this.baseDecode(s, num3);
+            const charCode = decimalVal - num2;
+            
+            if (charCode > 0 && charCode < 65535) {
+                result += String.fromCharCode(charCode);
+            }
+        }
+
+        try {
+            return decodeURIComponent(encodeURI(result));
+        } catch (e) {
+            return result; // Fallback if URI malformed
+        }
+    }
+
+    /**
+     * Parses the obfuscated script string and extracts the decoded URL
+     */
+    static parseObfuscatedScript(scriptContent: string): string | null {
+        // Regex to match the eval function call structure:
+        // eval(function(p,a,c,k,e,d){...}...) or similar variations
+        // We look for the specific argument pattern: (string, int, string, int, int, int)
+        
+        // Improved Regex with proper escaping and no syntax errors
+        const pattern = /eval\(function\(p,a,c,k,e,d\)\{[\s\S]+?\}\((['"])([\s\S]*?)\1\s*,\s*(\d+)\s*,\s*(['"])([\s\S]*?)\4\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\)/;
+        const match = scriptContent.match(pattern);
+
+        if (!match) {
+            return null;
+        }
+
+        const encString = match[2];
+        const num1 = parseInt(match[3], 10);
+        const encToken = match[5];
+        const num2 = parseInt(match[6], 10);
+        const num3 = parseInt(match[7], 10);
+
+        if (isNaN(num1) || isNaN(num2) || isNaN(num3)) {
+            return null;
+        }
+
+        return this.decodeContent(encString, num1, encToken, num2, num3);
+    }
+}
+
+// --- Main Scraper Class ---
+
+export class AnimePaheScraper {
+    private readonly baseUrl: string = 'https://animepahe.pw';
+    private readonly userAgent: string;
+    private readonly resolverUrl?: string;
+
+    constructor(userAgent: string, resolverUrl?: string) {
+        this.userAgent = userAgent;
+        this.resolverUrl = resolverUrl;
+    }
+
+    private getHeaders(referer?: string) {
+        return {
+            'authority': 'animepahe.pw',
+            'accept': 'application/json, text/javascript, */*; q=0.01',
+            'accept-language': 'en-US,en;q=0.9',
+            'cookie': '__ddg2_=;',
+            'dnt': '1',
+            'sec-ch-ua': '"Not A(Brand";v="99", "Microsoft Edge";v="121", "Chromium";v="121"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'x-requested-with': 'XMLHttpRequest',
+            'referer': referer || 'https://animepahe.pw',
+            'user-agent': this.userAgent,
+        };
+    }
+
+    async getAiring(page: number = 1): Promise<AiringResponse> {
+        const url = `${this.baseUrl}/api?m=airing&page=${page}`;
+        const response = await fetch(url, { headers: this.getHeaders() });
+        if (!response.ok) throw new Error(`Failed to fetch airing: ${response.status}`);
+        return await response.json<AiringResponse>();
+    }
+
+    async search(query: string, page: number = 1): Promise<SearchResponse> {
+        const url = `${this.baseUrl}/api?m=search&q=${encodeURIComponent(query)}&page=${page}`;
+        const response = await fetch(url, { headers: this.getHeaders() });
+        if (!response.ok) throw new Error(`Search failed: ${response.status}`);
+        return await response.json<SearchResponse>();
+    }
+
+    async getAnimeInfo(slug: string): Promise<AnimeInfo> {
+        const url = `${this.baseUrl}/anime/${slug}`;
+        const response = await fetch(url, { headers: this.getHeaders(url) });
+        if (!response.ok) throw new Error(`Info fetch failed: ${response.status}`);
+
+        const html = await response.text();
+        const $ = cheerio.load(html);
+        const info: Partial<AnimeInfo> = {};
+
+        // Title
+        info.title = $('.title-wrapper h1 span').first().text().trim() || $('h1').first().text().trim();
+        
+        // Poster & Cover
+        info.poster = $('.poster-wrapper img').attr('data-src') || $('.poster-wrapper img').attr('src') || '';
+        info.cover = $('.cover-wrapper').css('background-image')?.replace(/url\(["']?(.*?)["']?\)/, '$1') || '';
+
+        // Synopsis
+        info.synopsis = $('.anime-synopsis').text().trim() || $('.synopsis').text().trim();
+
+        // IDs Metadata
+        info.ids = {
+            animepahe_id: $('meta[name="id"]').attr('content') || null,
+            anidb: $('meta[name="anidb"]').attr('content') || null,
+            anilist: $('meta[name="anilist"]').attr('content') || null,
+            animePlanet: $('meta[name="anime-planet"]').attr('content') || null,
+            ann: $('meta[name="ann"]').attr('content') || null,
+            kitsu: $('meta[name="kitsu"]').attr('content') || null,
+            mal: $('meta[name="myanimelist"]').attr('content') || null,
+        };
+
+        // --- 4. EXTRACT RECOMMENDATIONS ---
+        const recommendations: any[] = [];
+        $('div.tab-content.anime-recommendation > div.col-12.col-sm-6.mb-3').each((_, entry) => {
+            const $entry = $(entry);
+            const titleLink = $entry.find('h5 a');
+            const img = $entry.find('a img').attr('data-src') || $entry.find('a img').attr('src');
+            const metaText = $entry.text();
+
+            const episodeMatch = metaText.match(/(\d+)\s+Episode/);
+            const statusMatch = metaText.match(/\(([^)]+)\)\s*$/);
+
+            recommendations.push({
+                title: titleLink.text().trim(),
+                slug: titleLink.attr('href')?.replace('/anime/', ''),
+                image: img || null,
+                type: $entry.find('strong a').first().text().trim() || 'Unknown',
+                episodes: episodeMatch ? episodeMatch[1] : '?',
+                status: statusMatch ? statusMatch[1].trim() : 'Unknown'
+            });
+        });
+
+        // Enhanced Meta Data Table Extraction
+        const getInfoRow = (label: string): string | null => {
+            let result: string | null = null;
+            // Try multiple selector patterns for robustness
+            $('div.anime-info p, .meta-data p, .info-section p').each((_, el) => {
+                const text = $(el).text();
+                if (text.includes(`${label}:`)) {
+                    result = text.split(`${label}:`)[1]?.trim() || null;
+                }
+            });
+            return result;
+        };
+
+        // Basic Info
+        info.type = getInfoRow('Type') || '';
+        const episodesText = getInfoRow('Episodes') || '0';
+        info.episodes = parseInt(episodesText) || null;
+        info.status = getInfoRow('Status') || '';
+        info.premiered = getInfoRow('Premiered') || getInfoRow('Season') || '';
+        info.aired = getInfoRow('Aired') || getInfoRow('Air Date') || '';
+        info.episode_duration = getInfoRow('Duration') || getInfoRow('Episode Duration') || undefined;
+        
+        // Additional Info
+        info.source = getInfoRow('Source') || getInfoRow('Manga') || undefined;
+        info.rating = getInfoRow('Rating') || getInfoRow('Content Rating') || undefined;
+        info.season = this.extractSeason(info.premiered || null) || undefined;
+        info.year = this.extractYear(info.aired || null) || undefined;
+
+        // Genres
+        info.genre = $('.anime-genre ul li a, .genre-list a, .tag a').map((_, el) => $(el).text().trim()).get();
+
+        // Studios
+        info.studios = [];
+        const studioText = getInfoRow('Studio') || getInfoRow('Studios');
+        if (studioText) {
+            info.studios = studioText.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        // Alternative studio extraction
+        if (info.studios.length === 0) {
+            info.studios = $('.studio-list a, .studio a, [data-studio]').map((_, el) => $(el).text().trim()).get();
+        }
+
+        // Producers
+        info.producers = [];
+        const producerText = getInfoRow('Producer') || getInfoRow('Producers');
+        if (producerText) {
+            info.producers = producerText.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        if (info.producers.length === 0) {
+            info.producers = $('.producer-list a, .producer a').map((_, el) => $(el).text().trim()).get();
+        }
+
+        // Score
+        const scoreText = $('.score').text() || $('i.fa-star').parent().text();
+        info.score = parseFloat(scoreText) || null;
+
+        // Alternative Titles (English, Japanese)
+        const altText = $('.other-title').text() || getInfoRow('Synonyms') || '';
+        info.alternative_titles = altText ? altText.split(',').map(s => s.trim()).filter(Boolean) : [];
+        
+        // Try to extract English and Japanese titles
+        const titlePatterns = {
+            english: /(?:English|ENG|EN)[\s:]*(.+?)(?:\n|$)/i,
+            japanese: /(?:Japanese|JPN|JP|Native)[\s:]*(.+?)(?:\n|$)/i
+        };
+        
+        for (const alt of info.alternative_titles) {
+            if (!info.english_title && titlePatterns.english.test(alt)) {
+                info.english_title = alt.replace(titlePatterns.english, '$1').trim();
+            }
+            if (!info.japanese_title && titlePatterns.japanese.test(alt)) {
+                info.japanese_title = alt.replace(titlePatterns.japanese, '$1').trim();
+            }
+        }
+
+        // Themes (Opening/Ending)
+        info.themes = {};
+        const openingTheme = getInfoRow('Opening Theme') || getInfoRow('OP');
+        if (openingTheme) {
+            info.themes.opening = [openingTheme];
+        }
+        const endingTheme = getInfoRow('Ending Theme') || getInfoRow('ED');
+        if (endingTheme) {
+            info.themes.ending = [endingTheme];
+        }
+
+        // Statistics
+        const watchingText = getInfoRow('Watching') || '';
+        info.watching = this.parseNumber(watchingText) || undefined;
+        const completedText = getInfoRow('Completed') || '';
+        info.completed = this.parseNumber(completedText) || undefined;
+        const planText = getInfoRow('Plan to Watch') || '';
+        info.plan_to_watch = this.parseNumber(planText) || undefined;
+
+        if (!info.title) throw new Error('Could not extract anime title');
+
+        info.recommendations = recommendations;
+        return info as AnimeInfo;
+    }
+
+    /**
+     * Extracts season from premiered/aired text (e.g., "Fall 2020" -> "Fall")
+     */
+    private extractSeason(text: string | null): string | null {
+        if (!text) return null;
+        const seasons = ['Spring', 'Summer', 'Fall', 'Winter'];
+        for (const season of seasons) {
+            if (text.includes(season)) return season;
+        }
+        return null;
+    }
+
+    /**
+     * Extracts year from aired/premiered text (e.g., "Oct 5, 2020" -> 2020)
+     */
+    private extractYear(text: string | null): number | null {
+        if (!text) return null;
+        const yearMatch = text.match(/\b(19|20)\d{2}\b/);
+        return yearMatch ? parseInt(yearMatch[1] + yearMatch[0].slice(2)) : null;
+    }
+
+    /**
+     * Parses number from text with k/m suffixes (e.g., "1.5k" -> 1500)
+     */
+    private parseNumber(text: string | null): number | null {
+        if (!text) return null;
+        const match = text.match(/[\d.]+\s*[kKmM]?/);
+        if (!match) return null;
+        
+        let num = parseFloat(match[0]);
+        if (match[0].includes('k') || match[0].includes('K')) num *= 1000;
+        if (match[0].includes('m') || match[0].includes('M')) num *= 1000000;
+        
+        return isNaN(num) ? null : Math.floor(num);
+    }
+
+    private extractStreamUrlFromHtml(html: string): string | null {
+        const urlRegex = /https?:\/\/[^"]+\.(?:m3u8|mp4)(?:\?[^"'<>\s]*)?/i;
+        const directMatch = html.match(urlRegex);
+        if (directMatch) {
+            return directMatch[0];
+        }
+
+        const $ = cheerio.load(html);
+        const candidateRegex = /https?:\/\/[^"]+\.(?:m3u8|mp4)(?:\?[^"'<>\s]*)?/i;
+        let foundStream: string | null = null;
+
+        $('*').each((_, el) => {
+            if (foundStream) return;
+            const attribs = (el as any).attribs || {};
+            for (const attrName of Object.keys(attribs)) {
+                const value = attribs[attrName];
+                if (!value) continue;
+                const match = value.match(candidateRegex);
+                if (match) {
+                    foundStream = match[0];
+                    return;
+                }
+            }
+        });
+
+        if (foundStream) {
+            return foundStream;
+        }
+
+        const htmlText = $.html();
+        const sourceBlock = htmlText.match(/sources\s*[:=]\s*\[([\s\S]*?)\]/i);
+        if (sourceBlock) {
+            const fileMatch = sourceBlock[1].match(/['"](https?:\/\/[^"]+\.(?:m3u8|mp4)(?:\?[^"'<>\s]*)?)['"]/i);
+            if (fileMatch) {
+                return fileMatch[1];
+            }
+        }
+
+        const fileMatch = htmlText.match(/file\s*[:=]\s*['"](https?:\/\/[^"]+\.(?:m3u8|mp4)(?:\?[^"'<>\s]*)?)['"]/i);
+        if (fileMatch) {
+            return fileMatch[1];
+        }
+
+        const sourceUrlMatch = htmlText.match(/source\s*[:=]\s*['"](https?:\/\/[^"]+\.(?:m3u8|mp4)(?:\?[^"'<>\s]*)?)['"]/i);
+        if (sourceUrlMatch) {
+            return sourceUrlMatch[1];
+        }
+
+        return null;
+    }
+
+    async getEpisodes(slug: string, page: number = 1): Promise<{
+        title: string;
+        total: number;
+        current_page: number;
+        last_page: number;
+        episodes: EpisodeData[];
+    }> {
+        const url = `${this.baseUrl}/api?m=release&id=${slug}&sort=episode_asc&page=${page}`;
+        const response = await fetch(url, { headers: this.getHeaders(`${this.baseUrl}/anime/${slug}`) });
+        if (!response.ok) throw new Error(`Episodes fetch failed: ${response.status}`);
+
+        const data = await response.json<{
+            total: number;
+            current_page: number;
+            last_page: number;
+            data: Array<any>;
+        }>();
+
+        // Fetch title separately if needed, or assume slug is close enough
+        const title = slug; 
+
+        return {
+            title,
+            total: data.total,
+            current_page: data.current_page,
+            last_page: data.last_page,
+            episodes: data.data.map(ep => ({
+                id: ep.id,
+                episode: ep.episode,
+                episode2: ep.episode2,
+                title: ep.title,
+                session: ep.session,
+                snapshot: ep.snapshot,
+                audio: ep.audio,
+                duration: ep.duration,
+                filler: ep.filler
+            }))
+        };
+    }
+
+    /**
+     * Extracts Kwik links and attempts to decode them to find MP4/M3U8
+     */
+    async getEpisodeLinks(slug: string, session: string): Promise<EpisodeLinks> {
+        const url = `${this.baseUrl}/play/${slug}/${session}`;
+        const response = await fetch(url, { headers: this.getHeaders(`${this.baseUrl}/anime/${slug}`) });
+        if (!response.ok) throw new Error(`Links fetch failed: ${response.status}`);
+
+        const html = await response.text();
+        const $ = cheerio.load(html);
+
+        const episodeTitle = $('h1').first().text().trim();
+        const episodeNumMatch = episodeTitle.match(/Episode\s*(\d+)/i);
+        const episodeNum = episodeNumMatch ? parseInt(episodeNumMatch[1]) : 0;
+
+        let pageEmbedUrl: string | null = null;
+        $('iframe[src]').each((_, iframe) => {
+            const src = $(iframe).attr('src')?.trim();
+            if (!src) return;
+            if (!pageEmbedUrl || /kwik|embed|player|animepahe/i.test(src)) {
+                pageEmbedUrl = src;
+            }
+        });
+
+        const normalizeEmbedUrl = (value: string | null): string | null => {
+            if (!value) return null;
+            if (value.startsWith('//')) {
+                return 'https:' + value;
+            }
+            if (value.startsWith('/')) {
+                return new URL(value, this.baseUrl).toString();
+            }
+            return value;
+        };
+
+        const embedUrl = normalizeEmbedUrl(pageEmbedUrl);
+
+        const links: LinkQuality[] = [];
+        
+        // Extract all kwik embed links with their resolution from data-src attributes
+        // Pattern matches: data-src="https://kwik.cx/e/..."
+        const kwikDataSrcRegex = /data-src="(https:\/\/kwik\.cx\/e\/[^"]+)"/g;
+        const dataSrcMatches = [...html.matchAll(kwikDataSrcRegex)];
+        const kwikEmbeds = [...new Set(dataSrcMatches.map(m => m[1].trim()))];
+        
+        // Find all download buttons/links
+        $('#pickDownload a, .download-option a').each((_, el) => {
+            const href = $(el).attr('href');
+            const text = $(el).text().trim();
+            
+            if (href && href.includes('pahe.win')) {
+                const metadata = this.parseLinkMetadata(text);
+                
+                // Find matching embed URL based on resolution/fansub
+                let matchedEmbed = '';
+                const targetRes = metadata.resolution?.replace('p', '') || '';
+                const targetFansub = metadata.fansub || '';
+                const isDub = metadata.isDub;
+                
+                // Try to match embed by parsing the resolution menu buttons
+                $(`#resolutionMenu button[data-src]`).each((_, btnEl) => {
+                    const btnFansub = $(btnEl).attr('data-fansub') || '';
+                    const btnRes = $(btnEl).attr('data-resolution') || '';
+                    const btnAudio = $(btnEl).attr('data-audio') || '';
+                    const btnDataSrc = $(btnEl).attr('data-src') || '';
+                    
+                    const btnIsDub = btnAudio.toLowerCase() === 'eng';
+                    const resMatch = targetRes && btnRes === targetRes;
+                    const fansubMatch = !targetFansub || btnFansub === targetFansub;
+                    const dubMatch = isDub === undefined || isDub === btnIsDub;
+                    
+                    if (resMatch && fansubMatch && dubMatch && btnDataSrc) {
+                        matchedEmbed = btnDataSrc.trim();
+                        return false; // break
+                    }
+                });
+                
+                // Fallback: use first available embed if no match found
+                if (!matchedEmbed && kwikEmbeds.length > 0) {
+                    matchedEmbed = kwikEmbeds[0];
+                }
+                
+                links.push({
+                    quality: metadata.quality,
+                    size: metadata.size,
+                    fansub: metadata.fansub,
+                    resolution: metadata.resolution,
+                    filesize: metadata.filesize,
+                    isDub: metadata.isDub,
+                    isBD: metadata.isBD,
+                    link: href,
+                    kwik_url: '',
+                    embed: matchedEmbed,
+                    mp4_url: null
+                });
+            }
+        });
+
+        // Resolve Kwik URLs and attempt MP4 extraction for each download link
+        for (const item of links) {
+            try {
+                const kwikData = await this.resolveKwikLink(item.link);
+                if (kwikData) {
+                    item.kwik_url = kwikData.url;
+                    item.mp4_url = kwikData.mp4;
+                } else {
+                    item.kwik_url = "unresolved";
+                }
+            } catch (e) {
+                console.error(`Failed to resolve link ${item.link}:`, e);
+                item.kwik_url = "error";
+            }
+        }
+
+        // Additionally, try to detect embed/iframe/kwik candidates elsewhere on the page
+        let embed_mp4: string | null = null;
+        const candidates = new Set<string>();
+        if (embedUrl) candidates.add(embedUrl);
+
+        // Find raw kwik links in the HTML
+        const kwikRegexGlobal = /https?:\/\/(?:www\.)?kwik\.[\w.-]+\/[fd]\/[A-Za-z0-9]+/ig;
+        const htmlMatches = html.match(kwikRegexGlobal) || [];
+        for (const m of htmlMatches) candidates.add(m);
+
+        // Collect any data-src attributes (resolution buttons, lazy images, etc.)
+        $('[data-src]').each((_, el) => {
+            const v = $(el).attr('data-src')?.trim();
+            if (v) candidates.add(v);
+        });
+
+        // Inspect inline scripts for direct assignments, var definitions, or obfuscated strings
+        $('script').each((_, s) => {
+            const scriptText = $(s).html() || '';
+            if (!scriptText) return;
+
+            // Simple src assignments: iframe.src = '...'
+            const assignMatch = scriptText.match(/iframe\.src\s*=\s*['"]([^'\"]+)['"]/i)
+                || scriptText.match(/setAttribute\(['"]src['"],\s*['"]([^'\"]+)['"]\)/i)
+                || scriptText.match(/\.attr\(['"]src['"],\s*['"]([^'\"]+)['"]\)/i);
+            if (assignMatch && assignMatch[1]) candidates.add(assignMatch[1]);
+
+            // Look for simple variable definitions like: var url = '...'; let url = '...'; const url = '...';
+            const varMatch = scriptText.match(/(?:var|let|const)\s+url\s*=\s*['"]([^'\"]+)['"]/i);
+            if (varMatch && varMatch[1]) candidates.add(varMatch[1]);
+
+            // Also attempt to find arrays/objects that may contain direct files: sources = ['...', ...]
+            const sourcesMatch = scriptText.match(/sources\s*[:=]\s*\[([\s\S]*?)\]/i);
+            if (sourcesMatch && sourcesMatch[1]) {
+                const fileMatches = Array.from(sourcesMatch[1].matchAll(/['"](https?:[^'"\]]+?)['"]/ig));
+                for (const fm of fileMatches) candidates.add(fm[1]);
+            }
+
+            // Obfuscated eval blocks: try to decode and search
+            if (/eval\(/i.test(scriptText)) {
+                try {
+                    const decoded = KwikDecoder.parseObfuscatedScript(scriptText);
+                    if (decoded) {
+                        const dm = decoded.match(kwikRegexGlobal) || [];
+                        for (const dmi of dm) candidates.add(dmi);
+                        const direct = this.extractStreamUrlFromHtml(decoded);
+                        if (direct) {
+                            embed_mp4 = direct;
+                        }
+                    }
+                } catch (e) {
+                    // ignore decoding errors
+                }
+            }
+        });
+
+        // Try resolving candidates to MP4 (stop on first success)
+        for (const c of Array.from(candidates)) {
+            if (!c) continue;
+            try {
+                const resolved = await this.resolveKwikLink(c);
+                if (resolved && resolved.mp4) {
+                    embed_mp4 = resolved.mp4;
+                    // If no individual link had mp4, attach to the first link for convenience
+                    const firstLink = links.find(l => l.mp4_url === null || l.mp4_url === undefined);
+                    if (firstLink && !firstLink.mp4_url) {
+                        firstLink.mp4_url = embed_mp4;
+                    }
+                    break;
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        return {
+            episode: episodeNum,
+            title: episodeTitle,
+            embed: embedUrl,
+            embed_mp4,
+            links
+        };
+    }
+
+    /**
+     * Parses the text label of a download button for metadata
+     */
+    private parseLinkMetadata(text: string) {
+        const cleanText = text.replace(/\s+/g, ' ').trim();
+        const parts = cleanText.split('·').map(p => p.trim());
+        
+        let fansub = null;
+        let quality = cleanText;
+        let resolution = null;
+        let filesize = null;
+        let isDub = false;
+        let isBD = false;
+
+        if (parts.length >= 2) {
+            fansub = parts[0];
+            const details = parts.slice(1).join(' ');
+            
+            // Resolution
+            const resMatch = details.match(/(\d{3,4})[pP]/);
+            if (resMatch) resolution = resMatch[1] + 'p';
+
+            // Size
+            const sizeMatch = details.match(/\(([\d.]+\s?[MGK]B)\)/i);
+            if (sizeMatch) filesize = sizeMatch[1];
+
+            // Dub/BD
+            if (/eng|dub/i.test(details)) isDub = true;
+            if (/bd|blu-ray/i.test(details)) isBD = true;
+        }
+
+        return { quality, fansub, resolution, filesize, isDub, isBD, size: filesize || 'Unknown' };
+    }
+
+    /**
+     * Fetches the pahe.win intermediate page, extracts the Kwik URL,
+     * and attempts to decode the script to find an MP4/M3U8 link.
+     */
+    private async resolveKwikLink(paheUrl: string): Promise<{ url: string, mp4: string | null } | null> {
+        try {
+            const res = await fetch(paheUrl, {
+                headers: { ...this.getHeaders(), 'accept': 'text/html' },
+                redirect: 'follow'
+            });
+            if (!res.ok) return null;
+
+            const cookied = this.extractCookiesFromHeaders(res.headers);
+            const html = await res.text();
+
+            // 1. Try simple Regex for Kwik URL first
+            let kwikUrl = html.match(/https?:\/\/(?:www\.)?kwik\.[\w.-]+\/[fd]\/[A-Za-z0-9]+/i)?.[0];
+
+            // 2. If not found, try to decode the obfuscated script
+            if (!kwikUrl) {
+                const scripts = html.match(/<script[^>]*>([\s\S]*?)<\/script>/g) || [];
+                for (const scriptTag of scripts) {
+                    if (scriptTag.includes('eval') && scriptTag.includes('function')) {
+                        const decoded = KwikDecoder.parseObfuscatedScript(scriptTag);
+                        if (decoded) {
+                            const urlMatch = decoded.match(/https?:\/\/(?:www\.)?kwik\.[\w.-]+\/[fd]\/[A-Za-z0-9]+/i);
+                            if (urlMatch) {
+                                kwikUrl = urlMatch[0];
+                                const directStream = this.extractStreamUrlFromHtml(decoded);
+                                if (directStream) {
+                                    return { url: kwikUrl, mp4: directStream };
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!kwikUrl) return null;
+
+            // Normalize Kwik URL (ensure /f/ for direct access if possible, though /d/ is often the landing)
+            const normalizedUrl = kwikUrl.replace('/d/', '/f/');
+            const urlsToTry = normalizedUrl === kwikUrl ? [normalizedUrl] : [normalizedUrl, kwikUrl];
+
+            for (const pageUrl of urlsToTry) {
+                try {
+                    const kwikRes = await fetch(pageUrl, {
+                        headers: {
+                            'User-Agent': this.userAgent,
+                            'Referer': paheUrl,
+                            ...(cookied ? { 'Cookie': cookied } : {})
+                        }
+                    });
+                    if (!kwikRes.ok) continue;
+
+                    const kwikHtml = await kwikRes.text();
+                    const kwikCookies = this.extractCookiesFromHeaders(kwikRes.headers);
+                    const streamUrl = this.extractStreamUrlFromHtml(kwikHtml);
+                    if (streamUrl) {
+                        return { url: pageUrl, mp4: streamUrl };
+                    }
+
+                    const formData = this.extractKwikFormData(kwikHtml, pageUrl);
+                    if (formData.fields && Object.keys(formData.fields).length > 0) {
+                        const postUrl = formData.action || pageUrl;
+
+                        const cookieHeader = [cookied, kwikCookies].filter(Boolean).join('; ');
+                        const originHeader = new URL(pageUrl).origin;
+
+                        const postResponse = await fetch(postUrl, {
+                            method: 'POST',
+                            headers: {
+                                'User-Agent': this.userAgent,
+                                'Referer': pageUrl,
+                                'Origin': originHeader,
+                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                                'Content-Type': 'application/x-www-form-urlencoded',
+                                ...(cookieHeader ? { 'Cookie': cookieHeader } : {})
+                            },
+                            body: new URLSearchParams(formData.fields).toString(),
+                            redirect: 'manual'
+                        });
+
+                        if (postResponse.status === 301 || postResponse.status === 302) {
+                            const location = postResponse.headers.get('location');
+                            if (location) {
+                                const resolvedLocation = new URL(location, postUrl).toString();
+                                return { url: resolvedLocation, mp4: resolvedLocation };
+                            }
+                        }
+
+                        const postBody = await postResponse.text();
+                        const postStream = this.extractStreamUrlFromHtml(postBody) || this.extractRedirectFromHtml(postBody, postUrl);
+                        if (postStream) {
+                            return { url: pageUrl, mp4: postStream };
+                        }
+                    }
+
+                    const kwikScripts = kwikHtml.match(/<script[^>]*>([\s\S]*?)<\/script>/g) || [];
+                    for (const scriptTag of kwikScripts) {
+                        if (scriptTag.includes('eval(')) {
+                            const decoded = KwikDecoder.parseObfuscatedScript(scriptTag);
+                            if (decoded) {
+                                const decodedStream = this.extractStreamUrlFromHtml(decoded);
+                                if (decodedStream) {
+                                    return { url: pageUrl, mp4: decodedStream };
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Ignore secondary fetch errors
+                }
+            }
+
+            // If we couldn't extract the mp4 in-worker, try an external resolver service if configured
+            if (this.resolverUrl) {
+                try {
+                    const resolverRes = await fetch(this.resolverUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: paheUrl })
+                    });
+                    if (resolverRes.ok) {
+                        const jr: any = await resolverRes.json();
+                        if (jr && jr.success) {
+                            if (jr.mp4) return { url: jr.finalUrl || paheUrl, mp4: jr.mp4 };
+                            if (jr.finalUrl) return { url: jr.finalUrl, mp4: jr.finalUrl };
+                        }
+                    }
+                } catch (e) {
+                    // ignore external resolver errors
+                }
+            }
+
+            return { url: normalizedUrl, mp4: null };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    private extractCookiesFromHeaders(headers: Headers): string | null {
+        const setCookie = headers.get('set-cookie');
+        if (!setCookie) return null;
+
+        const match = setCookie.match(/^(.*?);/);
+        return match ? match[1] : setCookie;
+    }
+
+    private extractKwikFormData(html: string, baseUrl: string): { action: string | null; fields: Record<string, string> } {
+        const $ = cheerio.load(html);
+        const form = $('form').first();
+        if (!form.length) {
+            return { action: null, fields: {} };
+        }
+
+        const actionAttr = form.attr('action') || '';
+        const action = actionAttr ? new URL(actionAttr, baseUrl).toString() : baseUrl;
+        const fields: Record<string, string> = {};
+
+        form.find('input[name]').each((_, input) => {
+            const name = $(input).attr('name');
+            if (!name) return;
+            const value = $(input).attr('value') || '';
+            fields[name] = value;
+        });
+
+        return { action, fields };
+    }
+
+    private extractRedirectFromHtml(html: string, baseUrl: string): string | null {
+        const redirectMatch = html.match(/window\.location(?:\.href)?\s*=\s*["']([^"']+)["']/i)
+            || html.match(/location\.href\s*=\s*["']([^"']+)["']/i)
+            || html.match(/window\.location\s*=\s*["']([^"']+)["']/i);
+
+        if (!redirectMatch) return null;
+        return new URL(redirectMatch[1], baseUrl).toString();
+    }
+
+    async getIndex(letter: string = 'A', page: number = 1): Promise<IndexResponse> {
+        const url = `${this.baseUrl}/api?m=items&letter=${encodeURIComponent(letter)}&page=${page}`;
+        const response = await fetch(url, { headers: this.getHeaders() });
+        if (!response.ok) throw new Error(`Index fetch failed: ${response.status}`);
+        return await response.json<IndexResponse>();
+    }
+
+    async getQueue(): Promise<{ queued: Array<{ title: string; slug: string; poster: string }> }> {
+        try {
+            const url = `${this.baseUrl}/api?m=queue`;
+            const response = await fetch(url, { headers: this.getHeaders() });
+            if (!response.ok) return { queued: [] };
+            const data: any = await response.json();
+            return {
+                queued: (data.data || []).map((item: any) => ({
+                    title: item.title || 'Unknown',
+                    slug: item.slug || '',
+                    poster: item.poster || ''
+                }))
+            };
+        } catch {
+            return { queued: [] };
+        }
+    }
+}
+
+// --- Worker Handler ---
+
+export const AnimePaheHandler = async (request: Request, env: Env, ctx: ExecutionContext): Promise<Response> => {
+    const url = new URL(request.url);
+    const { searchParams } = url;
+    const userAgent = request.headers.get('user-agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+    const resolverBinding = (env && (env.KWIK_RESOLVER_URL || env.KWIK_RESOLVER)) || undefined;
+    const scraper = new AnimePaheScraper(userAgent, resolverBinding as string | undefined);
+    const action = searchParams.get('action');
+
+    if (!action) {
+        return WorkerResponse({
+            error: 'Missing action parameter',
+            available_actions: ['airing', 'search', 'info', 'episodes', 'links', 'index', 'queue']
+        });
+    }
+
+    try {
+        switch (action) {
+            case 'airing': {
+                const page = parseInt(searchParams.get('page') || '1');
+                return WorkerResponse(await scraper.getAiring(page));
+            }
+            case 'search': {
+                const query = searchParams.get('query');
+                if (!query) return WorkerResponse({ error: 'Missing query' });
+                const page = parseInt(searchParams.get('page') || '1');
+                return WorkerResponse(await scraper.search(query, page));
+            }
+            case 'info': {
+                const slug = searchParams.get('slug');
+                if (!slug) return WorkerResponse({ error: 'Missing slug' });
+                return WorkerResponse(await scraper.getAnimeInfo(slug));
+            }
+            case 'episodes': {
+                const slug = searchParams.get('slug');
+                if (!slug) return WorkerResponse({ error: 'Missing slug' });
+                const page = parseInt(searchParams.get('page') || '1');
+                return WorkerResponse(await scraper.getEpisodes(slug, page));
+            }
+            case 'links': {
+                const slug = searchParams.get('slug');
+                const session = searchParams.get('session');
+                if (!slug || !session) return WorkerResponse({ error: 'Missing slug or session' });
+                return WorkerResponse(await scraper.getEpisodeLinks(slug, session));
+            }
+            case 'index': {
+                const letter = searchParams.get('letter') || 'A';
+                const page = parseInt(searchParams.get('page') || '1');
+                return WorkerResponse(await scraper.getIndex(letter, page));
+            }
+            case 'queue': {
+                return WorkerResponse(await scraper.getQueue());
+            }
+            case 'resolve_kwik': {
+                const targetUrl = searchParams.get('url');
+                let urlToResolve = targetUrl || null;
+
+                if (!urlToResolve && request.method === 'POST') {
+                    try {
+                        const body = await request.json() as Record<string, unknown>;
+                        if (body && typeof body === 'object' && 'url' in body && typeof body.url === 'string') {
+                            urlToResolve = body.url;
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+                }
+
+                if (!urlToResolve) return WorkerResponse({ error: 'Missing url parameter' }, '400');
+                if (!resolverBinding) return WorkerResponse({ error: 'No resolver configured' }, '400');
+
+                try {
+                    const proxyRes = await fetch(resolverBinding, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: urlToResolve })
+                    });
+
+                    const text = await proxyRes.text();
+                    const contentType = proxyRes.headers.get('content-type') || 'application/json';
+                    return new Response(text, {
+                        status: proxyRes.status,
+                        headers: {
+                            'content-type': contentType,
+                            'Access-Control-Allow-Origin': '*',
+                            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                            'Access-Control-Allow-Headers': 'Content-Type, Referer, User-Agent'
+                        }
+                    });
+                } catch (e) {
+                    return WorkerResponse({ error: 'Resolver request failed', message: e instanceof Error ? e.message : String(e) }, '500');
+                }
+            }
+            default:
+                return WorkerResponse({ error: 'Invalid action' }, '400');
+        }
+    } catch (error) {
+        return WorkerResponse({
+            error: 'Request failed',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        }, '500');
+    }
+};
